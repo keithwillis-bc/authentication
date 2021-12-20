@@ -10,20 +10,48 @@ router.get("/", function (req, res) {
 });
 
 router.get("/signup", function (req, res) {
-  res.render("signup");
+  let sessionData = req.session.inputData;
+  if (!sessionData) {
+    sessionData = {
+      email: "",
+      confirmedEmail: "",
+      password: "",
+      hasError: false,
+      message: "",
+    };
+  }
+  req.session.inputData = null;
+  res.render("signup", { sessionData });
 });
 
 router.get("/login", function (req, res) {
-  res.render("login");
+  let sessionData = req.session.inputData;
+  if (!sessionData) {
+    sessionData = {
+      email: "",
+      password: "",
+      hasError: false,
+      message: "",
+    };
+  }
+  res.render("login", { sessionData });
 });
 
 router.post("/signup", async function (req, res) {
   const userData = req.body;
-  const enteredEmail = userData.email;
+  const enteredEmail = userData.email.toLowerCase().trim();
   const enteredConfirmEmail = userData["confirm-email"];
   const enteredPassword = userData.password;
 
   const hashedPassword = await bcrypt.hash(enteredPassword, 12);
+
+  req.session.inputData = {
+    hasError: true,
+    message: "Invalid input - please check your data",
+    email: enteredEmail,
+    password: enteredPassword,
+    confirmedEmail: enteredConfirmEmail,
+  };
 
   if (
     enteredEmail !== enteredConfirmEmail ||
@@ -33,8 +61,10 @@ router.post("/signup", async function (req, res) {
     enteredPassword.trim().length < 6 ||
     !enteredEmail.includes("@")
   ) {
-    console.log("incorrect data");
-    return res.redirect("/signup");
+    req.session.save(() => {
+      res.redirect("/signup");
+    });
+    return;
   }
 
   const existingUser = await db
@@ -43,8 +73,17 @@ router.post("/signup", async function (req, res) {
     .findOne({ email: enteredEmail });
 
   if (existingUser) {
-    console.log("duplicate user");
-    return res.redirect("/signup");
+    req.session.inputData = {
+      hasError: true,
+      message: "Invalid input - User Already Exists.",
+      email: enteredEmail,
+      password: enteredPassword,
+      confirmedEmail: enteredConfirmEmail,
+    };
+    req.session.save(() => {
+      res.redirect("/signup");
+    });
+    return;
   }
 
   const user = {
@@ -64,11 +103,27 @@ router.post("/login", async function (req, res) {
   };
 
   const loggedInUser = await db.getDb().collection("users").findOne(user);
-
+  let sessionData = req.session.inputData;
+  if (!sessionData) {
+    sessionData = {
+      email: "",
+      password: "",
+      hasError: false,
+      message: "",
+    };
+  }
   if (!loggedInUser) {
     //send an error back
-    console.log("could not log in");
-    return res.redirect("/login");
+    req.session.inputData = {
+      email: enteredEmail,
+      password: enteredPassword,
+      message: "could not log in",
+      hasError: true,
+    };
+    req.session.save(() => {
+      res.redirect("/login");
+    });
+    return;
   }
 
   const passwordsMatch = await bcrypt.compare(
@@ -76,25 +131,54 @@ router.post("/login", async function (req, res) {
     loggedInUser.password
   );
   if (!passwordsMatch) {
-    console.log("could not log in, passwords do not match");
-    return res.redirect("/login");
+    req.session.inputData = {
+      email: enteredEmail,
+      password: enteredPassword,
+      message: "could not log in, passwords do not match",
+      hasError: true,
+    };
+    req.session.save(() => {
+      res.redirect("/login");
+    });
+    return;
   }
 
-  console.log("user is authenticated");
-
-  req.session.user = { id: loggedInUser._id, email: loggedInUser.email };
+  req.session.user = {
+    id: loggedInUser._id,
+    email: loggedInUser.email,
+  };
   req.session.isAuthenticated = true;
   req.session.save(() => {
-    res.redirect("/admin");
+    res.redirect("/profile");
   });
 });
 
-router.get("/admin", function (req, res) {
-  if (!req.session.isAuthenticated) {
+router.get("/admin", async function (req, res) {
+  if (!res.locals.isAuth) {
     return res.status(401).render("401");
   }
 
+  if (!res.locals.isAdmin) {
+    return res.status(403).render("403");
+  }
+
   res.render("admin");
+});
+
+router.get("/profile", function (req, res) {
+  if (!res.locals.isAuth) {
+    return res.status(401).render("401");
+  }
+  let sessionData = req.session.inputData;
+  if (!sessionData) {
+    sessionData = {
+      email: "",
+      password: "",
+      hasError: false,
+      message: "",
+    };
+  }
+  res.render("profile", { sessionData });
 });
 
 router.post("/logout", function (req, res) {
